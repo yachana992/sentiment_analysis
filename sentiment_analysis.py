@@ -1,157 +1,144 @@
 from nltk.stem.wordnet import WordNetLemmatizer
 from nltk.corpus import twitter_samples, stopwords
+from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 from nltk import FreqDist, classify, NaiveBayesClassifier
-import re, string, random
-import numpy as np
-import pandas as pd
-from sklearn.utils import shuffle
 import matplotlib.pyplot as plt
-from nltk.stem import PorterStemmer
-from nltk.classify.scikitlearn import SklearnClassifier
-from sklearn.naive_bayes import MultinomialNB,BernoulliNB
-from sklearn.svm import SVC, LinearSVC, NuSVC
-import nltk
+import re, string, random
+import nltk.metrics
+from wordcloud import WordCloud
+from sklearn.metrics import f1_score
+import collections
+import numpy as np
+from sklearn.metrics import classification_report
+#Removing noises like punctuations, hyperlinks and stop words in the tweets
+def remove_noise(tweet_tokens, stop_words = ()):
 
-positive_tweets = twitter_samples.strings('positive_tweets.json')
-negative_tweets = twitter_samples.strings('negative_tweets.json')
+    cleaned_tokens = []
 
-dataset = positive_tweets + negative_tweets
+    for token, tag in pos_tag(tweet_tokens):
 
-label_p= [0 for x in positive_tweets]
-label_n = [1 for x in negative_tweets]
-label = label_p + label_n
-data = {'data_set':dataset,'labels':label}
-df = pd.DataFrame(data)
-df = shuffle(df)
-df.reset_index(inplace=True, drop=True)
+        #removing hyperlinks using regular expressions
+        token = re.sub('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+#]|[!*\(\),]|'\
+                       '(?:%[0-9a-fA-F][0-9a-fA-F]))+','', token)
+        #Removing @ using regular expression
+        token = re.sub("(@[A-Za-z0-9_]+)","", token)
+        #Removing the symbol,#
+        token = re.sub(r'#','', token)
+        #Removing the symbol RT for retweets
+        token = re.sub(r'RT[\s]+','', token)
+        token = token.replace("\'", "");
+        token = token.replace("\"", "");
 
-y_train = list(df['labels'])
+        if tag.startswith("NN"):
+            pos = 'n'
+        elif tag.startswith('VB'):
+            pos = 'v'
+        else:
+            pos = 'a'
 
-tweets = list(df['data_set'])
+        #Lemmatizing each word into its base form
+        # Pos tagging each words
+        lemmatizer = WordNetLemmatizer()
+        token = lemmatizer.lemmatize(token, pos)
 
-positive= df['labels'].value_counts()[0]
-negative = df['labels'].value_counts()[1]
+        #Removes punctuations from the data and convert it into lowercase
+        if len(token) > 0 and token not in string.punctuation and token.lower() not in stop_words:
+            cleaned_tokens.append(token.lower())
+    return cleaned_tokens
 
-fig = plt.figure()
-ax = fig.add_axes([0,0,1,1])
-labels = ['positive', 'negative']
-quantity = [positive, negative]
-ax.bar(labels,quantity)
-plt.xlabel('Quality of tweet')
-plt.ylabel('Number of tweets')
-plt.show()
+def get_all_words(cleaned_tokens_list):
+    for tokens in cleaned_tokens_list:
+        for token in tokens:
+            yield token
 
-print("The first 10 negative tweets")
-print(df[df['labels'] == 1].head(10))
+def get_tweets_for_model(cleaned_tokens_list):
+    for tweet_tokens in cleaned_tokens_list:
+        yield dict([token, True] for token in tweet_tokens)
 
-def remove_special_characters(text, remove_digits=True):
-    text=re.sub(r'@[A-Za-z0-9]+','',text)
-    text = re.sub(r'#', '', text)
-    text = re.sub(r'RT[\s]+', '', text)
-    text= re.sub(r'https?:\/\/\S+', '', text)
-    return text
+if __name__ == "__main__":
 
-df['data_set']=df['data_set'].apply(remove_special_characters)
+    #Fetching the dataset
+    positive_tweets = twitter_samples.strings('positive_tweets.json')
+    negative_tweets = twitter_samples.strings('negative_tweets.json')
+    text = twitter_samples.strings('tweets.20150430-223406.json')
+    tweet_tokens = twitter_samples.tokenized('positive_tweets.json')[0]
+    #print(tweet_tokens)
+    #Stop words in english are words like the, and , is etc.
+    stop_words = stopwords.words('english')
 
-k=df['data_set'][0]
+    positive_tweet_tokens = twitter_samples.tokenized('positive_tweets.json')
+    negative_tweet_tokens = twitter_samples.tokenized('negative_tweets.json')
 
-#tokenize
-t=[]
-for tweet in list(df['data_set']):
-    tokened=word_tokenize(tweet)
-    t.append(tokened)
+    positive_cleaned_tokens_list = []
+    negative_cleaned_tokens_list = []
 
-#removing the stopwords
-stop_words = set(stopwords.words('english'))
-k=[]
-for tweet in t:
-    filtered_sentence = [w for w in tweet if not w in stop_words]
-    k.append(filtered_sentence)
+    #Applying the remove noise method in postive dataset
+    for tokens in positive_tweet_tokens:
+        positive_cleaned_tokens_list.append(remove_noise(tokens, stop_words))
 
-lemmatizer = WordNetLemmatizer()
-h=[]
-for tweet in k:
-    x=[lemmatizer.lemmatize(word) for word in tweet]
-    h.append(x)
+    #Applying the remove noise method in negative dataset
+    for tokens in negative_tweet_tokens:
+        negative_cleaned_tokens_list.append(remove_noise(tokens, stop_words))
+    
+    all_pos_words = get_all_words(positive_cleaned_tokens_list)
 
-df['normalized_tweet']=h
-def check(a):
-    if a==0:
-        return 'positive tweet'
-    else:
-        return 'negative tweet'
+    freq_dist_pos = FreqDist(all_pos_words)
+    print(freq_dist_pos.most_common(10))
+    
+    wordcloud = WordCloud().generate(str(positive_cleaned_tokens_list))
+    plt.figure(figsize = (15, 9))
+    # Display the generated image:
+    plt.imshow(wordcloud, interpolation= "bilinear")
+    plt.axis("off")
+    plt.show()
 
-m=[]
-for tweet in h:
-    r= [word for word in tweet if word !='user']
-    m.append(r)
+    wordcloud = WordCloud().generate(str(negative_cleaned_tokens_list))
+    plt.figure(figsize = (15, 9))
+    # Display the generated image:
+    plt.imshow(wordcloud, interpolation= "bilinear")
+    plt.axis("off")
+    plt.show()
 
-all_words = []
+    positive_tokens_for_model = get_tweets_for_model(positive_cleaned_tokens_list)
+    negative_tokens_for_model = get_tweets_for_model(negative_cleaned_tokens_list)
 
-for tweet in m:
-    for word in tweet:
-        all_words.append(word.lower())
+    positive_dataset = [(tweet_dict, "Positive")
+                         for tweet_dict in positive_tokens_for_model]
 
-all_words = dict(nltk.FreqDist(all_words))
+    negative_dataset = [(tweet_dict, "Negative")
+                         for tweet_dict in negative_tokens_for_model]
 
-a = sorted(all_words.items(), key=lambda x: x[1],reverse=True) 
-l=[]
-for x,y in a:
-    l.append(x)
+    dataset = positive_dataset + negative_dataset
 
-word_features=l[:3000]
+    #Shuffling the dataset 
+    #random.shuffle(dataset)
 
-documents=[]
-i=0
-for tweet in m:
-    x=(tweet,check(df['labels'][i]))
-    i=i+1
-    documents.append(x)
+    train_data = dataset[:7000]
+    test_data = dataset[7000:]
 
-print("The tweet with corresponding label")
-print(documents[0])
+    #Building the model 
+    classifier = NaiveBayesClassifier.train(train_data)
 
-def find_features(document):
-    words = set(document)
-    features = {}
-    for w in word_features:
-        features[w] = (w in words)
+    print("Accuracy on test data is:", classify.accuracy(classifier, test_data))
+    print("Accuracy on train data is:", classify.accuracy(classifier, train_data))
 
-    return features
+    print(classifier.show_most_informative_features(10))
 
-featuresets = [(find_features(tweet), sentiment) for (tweet, sentiment) in documents]
+    # The first elemnt of the tuple is the feature set and the second element is the label 
+    ground_truth = [r[1] for r in test_data]
 
-print("The first feature set")
-print(featuresets[0])
+    preds = [classifier.classify(r[0]) for r in test_data]
+    
+    y_test = ground_truth
+    y_pred = preds
+    class_names = ['Negative', 'Positive']
+    cm = nltk.ConfusionMatrix(y_test, y_pred)
+    print(classification_report(ground_truth, preds))
 
-print("The length of the feature set")
-print(len(featuresets))
+    custom_tweet = "I do not enjoy this."
 
-training_set = featuresets[:7000]
-testing_set = featuresets[7000:]
+    custom_tokens = remove_noise(word_tokenize(custom_tweet))
 
-classifier = nltk.NaiveBayesClassifier.train(training_set)
-
-print("Classifier accuracy percent on testing set:",(nltk.classify.accuracy(classifier, testing_set))*100,"%",sep='')
-print("Classifier accuracy percent on training set:",(nltk.classify.accuracy(classifier, training_set))*100,"%",sep='')
-
-print(classifier.show_most_informative_features(30))
-
-MNB_classifier = SklearnClassifier(MultinomialNB())
-
-MNB_classifier = SklearnClassifier(MultinomialNB())
-MNB_classifier.train(training_set)
-print("MNB_classifier accuracy percent:", (nltk.classify.accuracy(MNB_classifier, testing_set))*100,"%",sep="")
-
-BernoulliNB_classifier = SklearnClassifier(BernoulliNB())
-BernoulliNB_classifier.train(training_set)
-print("BernoulliNB_classifier accuracy percent:", (nltk.classify.accuracy(BernoulliNB_classifier, testing_set))*100,"%",sep="")
-
-SVC_classifier = SklearnClassifier(SVC())
-SVC_classifier.train(training_set)
-print("SVC_classifier accuracy percent:", (nltk.classify.accuracy(SVC_classifier, testing_set))*100,"%",sep="")
-
-LinearSVC_classifier = SklearnClassifier(LinearSVC())
-LinearSVC_classifier.train(training_set)
-print("LinearSVC_classifier accuracy percent:", (nltk.classify.accuracy(LinearSVC_classifier, testing_set))*100,"%",sep="")
+    print(custom_tweet, classifier.classify(dict([token, True] for token in custom_tokens)))
+    
